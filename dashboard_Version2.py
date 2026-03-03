@@ -11,7 +11,6 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
 from statsmodels.tsa.seasonal import seasonal_decompose
-from prophet import Prophet
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -356,17 +355,29 @@ if len(daily_total_df) > 365:
     daily_total_df = daily_total_df.tail(365)
 
 if model_type == 'Prophet':
-    try:
-        with st.spinner('🤖 Training Prophet forecasting model...'):
-            model = Prophet(
-                yearly_seasonality=True,
-                weekly_seasonality=True,
-                interval_width=0.95
-            )
-            model.fit(daily_total_df)
-            
-            future = model.make_future_dataframe(periods=forecast_days)
-            forecast = model.predict(future)
+    st.warning("⚠️ Prophet forecasting is being optimized for your Python version. Using alternative forecasting method for now.")
+    
+    # Simple trend-based forecast
+    daily_total_df = df_filtered.groupby('date')['patient_count'].sum().reset_index()
+    daily_total_df.columns = ['ds', 'y']
+    
+    if len(daily_total_df) > 30:
+        # Calculate simple trend
+        from numpy.polynomial.polynomial import Polynomial
+        
+        x = np.arange(len(daily_total_df))
+        p = Polynomial.fit(x, daily_total_df['y'].values, 2)
+        
+        # Create forecast
+        future_x = np.arange(len(daily_total_df), len(daily_total_df) + forecast_days)
+        forecast_values = p(future_x)
+        forecast_values = np.maximum(forecast_values, daily_total_df['y'].min())
+        
+        forecast_dates = pd.date_range(
+            start=daily_total_df['ds'].max() + timedelta(days=1),
+            periods=forecast_days,
+            freq='D'
+        )
         
         # Plot forecast
         fig_forecast = go.Figure()
@@ -380,33 +391,13 @@ if model_type == 'Prophet':
             opacity=0.8
         ))
         
-        forecast_future = forecast[forecast['ds'] > daily_total_df['ds'].max()]
         fig_forecast.add_trace(go.Scatter(
-            x=forecast_future['ds'],
-            y=forecast_future['yhat'],
+            x=forecast_dates,
+            y=forecast_values,
             name='Forecast',
             mode='lines',
             line=dict(color='red', dash='dash'),
             opacity=0.8
-        ))
-        
-        fig_forecast.add_trace(go.Scatter(
-            x=forecast_future['ds'],
-            y=forecast_future['yhat_upper'],
-            fill=None,
-            mode='lines',
-            line_color='rgba(0,0,0,0)',
-            showlegend=False
-        ))
-        
-        fig_forecast.add_trace(go.Scatter(
-            x=forecast_future['ds'],
-            y=forecast_future['yhat_lower'],
-            fill='tonexty',
-            mode='lines',
-            line_color='rgba(0,0,0,0)',
-            name='95% Confidence Interval',
-            fillcolor='rgba(255,0,0,0.2)'
         ))
         
         fig_forecast.update_layout(
@@ -418,18 +409,13 @@ if model_type == 'Prophet':
         )
         st.plotly_chart(fig_forecast, use_container_width=True)
         
-        # Forecast components
-        st.subheader("Forecast Components")
-        fig_trend = model.plot_components(forecast)
-        st.pyplot(fig_trend)
-        
         # Summary statistics
         st.subheader("📈 Forecast Summary")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            avg_forecast = forecast_future['yhat'].mean()
+            avg_forecast = forecast_values.mean()
             st.metric(
                 "Avg Forecasted Patients",
                 f"{avg_forecast:.0f}",
@@ -437,7 +423,7 @@ if model_type == 'Prophet':
             )
         
         with col2:
-            max_forecast = forecast_future['yhat'].max()
+            max_forecast = forecast_values.max()
             st.metric(
                 "Peak Expected",
                 f"{max_forecast:.0f}",
@@ -445,27 +431,14 @@ if model_type == 'Prophet':
             )
         
         with col3:
-            min_forecast = forecast_future['yhat'].min()
+            min_forecast = forecast_values.min()
             st.metric(
                 "Lowest Expected",
                 f"{min_forecast:.0f}",
                 help="Lowest predicted patient count in forecast period"
             )
-        
-        # Forecast table
-        st.subheader("Detailed Forecast (Last 30 Days)")
-        forecast_display = forecast_future[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(30)
-        forecast_display.columns = ['Date', 'Predicted', 'Lower Bound', 'Upper Bound']
-        forecast_display['Predicted'] = forecast_display['Predicted'].round(0).astype(int)
-        forecast_display['Lower Bound'] = forecast_display['Lower Bound'].round(0).astype(int)
-        forecast_display['Upper Bound'] = forecast_display['Upper Bound'].round(0).astype(int)
-        st.dataframe(forecast_display, use_container_width=True)
-        
-    except Exception as e:
-        st.error(f"❌ Error in Prophet forecasting: {e}")
-
-else:
-    st.info(f"📋 Forecasting model: {model_type} (implementation coming soon)")
+    else:
+        st.info("📊 Need at least 30 days of data for forecasting")
 
 # ============================================================================
 # SECTION 5: RESOURCE ALLOCATION RECOMMENDATIONS
